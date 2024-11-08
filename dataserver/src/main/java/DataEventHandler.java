@@ -8,7 +8,7 @@ import java.io.File;
 public class DataEventHandler implements IOCallback {
 
     private Map<String, Integer>        fileRecorder = new HashMap<>();
-    private String                      dataRootPath = "/DFSData";
+    private String                      dataRootPath = "./DFSData";
 
     private String genAbsolutePath(String prefix, String name) {
         return dataRootPath + File.separator + prefix + File.separator + name;
