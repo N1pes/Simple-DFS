@@ -10,7 +10,7 @@ public class MasterCommandExecutor implements CommandExecutor, IOCallback {
     private FileTree            root;
     private String              commandResult = "";
     private NIOClient           metaConnector;
-    private int                 fileSize;
+    private final Map<String, Integer>    fileSizeReorder = new HashMap<>();
     private final BlockingQueue<String> commandQueue = new LinkedBlockingQueue<>();
     private final BlockingQueue<String> commandResultQueue = new LinkedBlockingQueue<>();
     private final Set<String>   supportedCommands = new HashSet<>(Arrays.asList(
@@ -23,7 +23,7 @@ public class MasterCommandExecutor implements CommandExecutor, IOCallback {
         this.metaConnector = connector;
     }
     // --------------------- MetaServer IO --------------------
-    void sendGetIPRequest() throws IOException{
+    void sendGetIPRequest(int fileSize) throws IOException{
         Logger.debug("sending ip request");
         DfsProto packet = new DfsProto("get", fileSize, "ip", (short)0);
         ByteBuffer data = packet.encode();
@@ -48,11 +48,11 @@ public class MasterCommandExecutor implements CommandExecutor, IOCallback {
             Logger.debug("onReceive Master" );
             DfsProto packet = DfsProto.decode(data);
             String command, args, cmdesult;
-            fileSize = packet.fileSize();
+            int fileSize = packet.fileSize();
             command = packet.command();
             args = packet.args();
             Logger.debug("Command: " + command + " " + args);
-            commandQueue.add(command + " " + args);
+            commandQueue.add(command + " " + args + " " + String.valueOf(fileSize));
             // wait for command to be done
             cmdesult = commandResultQueue.take();
             DfsProto sendPacket = new DfsProto("resp", cmdesult, RESPONSE);
@@ -78,6 +78,12 @@ public class MasterCommandExecutor implements CommandExecutor, IOCallback {
     }
 
     // -------------------- Commands ----------------------
+    private int handleSizeRequest(String path) {
+        int fileSize = fileSizeReorder.get(path);
+        Logger.debug("Master::cat() filesize for " + path + " = " + String.valueOf(fileSize));
+        return fileSize;
+    }
+
     private String lsOne(String path) {
         StringBuilder result = new StringBuilder();
 
@@ -107,8 +113,9 @@ public class MasterCommandExecutor implements CommandExecutor, IOCallback {
         commandResult = result.toString();
     }
 
-    public void cat() {
-
+    public void cat(List<String> paths) {
+        int fileSize = handleSizeRequest(paths.get(0));
+        this.commandResult = String.valueOf(fileSize);
     }
 
     private void touchOne(String path) {
@@ -188,10 +195,14 @@ public class MasterCommandExecutor implements CommandExecutor, IOCallback {
         }
     }
 
-    public void put() {
+    public void put(List<String> paths) {
         Logger.debug("invoke put()");
         try {
-            sendGetIPRequest();
+            String prefix = paths.get(0);
+            String filename = paths.get(1);
+            int fileSize = Integer.parseInt(paths.get(2));
+            sendGetIPRequest(fileSize);
+            fileSizeReorder.put(prefix + "/" + filename, fileSize);
             this.commandResult = recvIPResponse();
             Logger.debug("Put command result: " + this.commandResult);
         } catch (IOException e) {
@@ -219,7 +230,7 @@ public class MasterCommandExecutor implements CommandExecutor, IOCallback {
                 this.ls(paths);
                 break;
             case "cat":
-                this.cat();
+                this.cat(paths);
                 break;
             case "touch":
                 this.touch(paths);
@@ -231,7 +242,7 @@ public class MasterCommandExecutor implements CommandExecutor, IOCallback {
                 this.rm(paths);
                 break;
             case "put":
-                this.put();
+                this.put(paths);
                 break;
             case "get":
                 this.get();

@@ -125,19 +125,78 @@ public class ClientCommandExecutor implements CommandExecutor {
         forwardCommand(cmdStr, paths, false);
     }
 
-    public void cat(String cmdStr, List<String>paths) {
+    private ByteBuffer catOne(String ip, int port, String remotePath, short idx) throws IOException {
+        ByteBuffer result;
 
+        NIOClient dataConnector = new NIOClient(ip, port, true);
+        dataConnector.connect();
+        Logger.debug("Client::catOne() connecting to data server ok");
+
+        DfsProto sendPacket = new DfsProto("cat", remotePath, (short)0);
+        sendPacket.setFileIdx(idx);
+        ByteBuffer sendData = sendPacket.encode();
+        sendData.flip();
+        dataConnector.send(sendData);
+        ByteBuffer recvData = dataConnector.recv();
+        recvData.flip();
+        DfsProto recvPacket = DfsProto.decode(recvData);
+        result = recvPacket.data();
+        Logger.debug(result.toString());
+        printByteBufferAsHex(result);
+
+        dataConnector.close();
+//        result.flip();
+        return result;
     }
 
-    private void putOne (String ip, int port, String path, int start, int length, int suffix) throws IOException {
+    public void cat(String cmdStr, String remotePath) throws IOException {
+        List<ServerAddress> dataServerAddress = new ArrayList<>();
+        DfsProto receivedPacket;
+        DfsProto packet = new DfsProto(cmdStr, remotePath, QUERY);
+        String response;
+        ByteBuffer result;
+
+        // TODO deduplicate
+        sendCommandToMaster(packet);
+        receivedPacket = recvRusltFromMaster();
+        response = receivedPacket.args();
+
+        int fileSize = Integer.parseInt(response);
+        result = ByteBuffer.allocate(fileSize);
+
+        Logger.debug("Client::cat() response: " + response);
+        // TODO
+//        StringTokenizer itr = new StringTokenizer(response);
+//        while (itr.hasMoreTokens()) {
+//            String[] info = itr.nextToken().split(":");
+//            dataServerAddress.add(new ServerAddress(info[0], Integer.parseInt(info[1])));
+//        }
+//
+//        for (ServerAddress addr: dataServerAddress) {
+//            result.put(catOne(addr.ip, addr.port, remotePath));
+//        }
+
+        result.put(catOne("127.0.0.1", 9996, remotePath, (short)0));
+        result.put(catOne("127.0.0.1", 9995, remotePath, (short)1));
+        result.flip();
+        System.out.println("cat result: ");
+        System.out.println(byteBufferToString(result));
+    }
+
+    private void putOne (String ip, int port, String remotePath, String localPath,
+                         int start, int length, int suffix) throws IOException
+    {
         Logger.debug("Client::putOne() connecting to " + ip + ":" + String.valueOf(port));
         NIOClient dataConnector = new NIOClient(ip, port, true);
         dataConnector.connect();
         Logger.debug("Client::putOne() connecting to data server ok");
 
-        ByteBuffer data = FileHelper.randomReadFromFile(path, start, length);
+        ByteBuffer data = FileHelper.randomReadFromFile(localPath, start, length);
+        data.flip();
 
-        DfsProto packet = new DfsProto("put", length, getBasePath(path), (short)0, data);
+        DfsProto packet = new DfsProto("put", length, remotePath + " "
+                + getBasePath(localPath), (short)0, data);
+
         packet.setFileIdx((short)suffix);
 
         Logger.debug("Client::putOne() " + data.toString());
@@ -149,16 +208,17 @@ public class ClientCommandExecutor implements CommandExecutor {
         dataConnector.close();
     }
 
-    public void put(String cmdStr, String path) {
+    public void put(String cmdStr, String remotePath, String localPath) {
         try {
             List<ServerAddress> dataServerAddress = new ArrayList<>();
-            int fileSize = FileHelper.getFileLength(path);
+            int fileSize = FileHelper.getFileLength(localPath);
             DfsProto receivedPacket;
             String response;
 
             Logger.debug("file size: " + String.valueOf(fileSize));
-            DfsProto packet = new DfsProto(cmdStr, fileSize, path, QUERY);
-            this.sendCommandToMaster(packet);
+            DfsProto packet = new DfsProto(cmdStr, fileSize, remotePath + " " + localPath, QUERY);
+
+            sendCommandToMaster(packet);
             receivedPacket = recvRusltFromMaster();
             response = receivedPacket.args();
             Logger.debug("Client::put() response: " + response);
@@ -173,7 +233,7 @@ public class ClientCommandExecutor implements CommandExecutor {
             int start = 0, block = 16; // TODO dummy values for now
             int i = 0;
             for (ServerAddress server: dataServerAddress) {
-                putOne(server.ip, server.port, path, start, block, i);
+                putOne(server.ip, server.port, remotePath, localPath, start, block, i);
                 start += block;
                 fileSize -= block;
                 i += 1;
@@ -186,7 +246,8 @@ public class ClientCommandExecutor implements CommandExecutor {
         }
 
     }
-    public void get(String cmdStr, String path) {
+
+    public void get(String cmdStr, String remotePath, String localPath) {
 
     }
 
@@ -197,15 +258,20 @@ public class ClientCommandExecutor implements CommandExecutor {
     @Override
     public void execute(String cmdStr, List<String> options, List<String> paths) {
         Logger.log(cmdStr);
-        String path;
+        String remotePath, localPath;
 
         switch (cmdStr) {
             case "ls":
                 this.ls(cmdStr, paths);
                 break;
             case "cat":
-                this.cat(cmdStr, paths);
-                break;
+                try {
+                    this.cat(cmdStr, paths.get(0));
+                    break;
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+
             case "touch":
                 this.touch(cmdStr, paths);
                 break;
@@ -216,12 +282,22 @@ public class ClientCommandExecutor implements CommandExecutor {
                 this.rm(cmdStr, paths);
                 break;
             case "put":
-                path = paths.get(0);
-                this.put(cmdStr, path);
+                if (paths.size() < 2) {
+                    Logger.error("Client::put() invalid args for put");
+                    return;
+                }
+                remotePath = paths.get(0);
+                localPath = paths.get(1);
+                this.put(cmdStr, remotePath, localPath);
                 break;
             case "get":
-                path = paths.get(0);
-                this.get(cmdStr, path);
+                if (paths.size() < 2) {
+                    Logger.error("Client::get() invalid args for get");
+                    return;
+                }
+                remotePath = paths.get(0);
+                localPath = paths.get(1);
+                this.get(cmdStr, remotePath, localPath);
                 break;
             default:
                 System.out.println("???");
@@ -246,5 +322,27 @@ public class ClientCommandExecutor implements CommandExecutor {
             return path.substring(idx + 1);
         }
         return path;
+    }
+
+    String byteBufferToString(ByteBuffer b) {
+        String s = StandardCharsets.UTF_8.decode(b).toString();
+        return s;
+    }
+
+    public static void printByteBufferAsHex(ByteBuffer buffer) {
+        int originalPosition = buffer.position();
+        buffer.rewind();
+        int count = 0;
+        while (buffer.hasRemaining()) {
+            count += 1;
+            byte b = buffer.get();
+            System.out.printf("%02X ", b);
+            if (count % 16 == 0) {
+                System.out.println("");
+            }
+        }
+
+        System.out.println();
+        buffer.position(originalPosition);
     }
 }

@@ -4,7 +4,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-
+import java.nio.file.Files;
 
 public class FileHelper {
     public static int getFileLength(String filePath) throws IOException {
@@ -16,6 +16,16 @@ public class FileHelper {
 
     public static void randomWriteToFile(String filePath, long offset, byte[] data) throws IOException {
         Path path = Paths.get(filePath);
+        Path parentDir = path.getParent();
+
+        try {
+            if (Files.notExists(parentDir)) {
+                Files.createDirectories(parentDir);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
         try (FileChannel fileChannel = FileChannel.open(path, StandardOpenOption.WRITE,
                 StandardOpenOption.CREATE)) {
             fileChannel.position(offset);
@@ -33,7 +43,7 @@ public class FileHelper {
             if (bytesRead == -1) {
                 System.out.println("Reached end of file.");
             }
-            buffer.flip();
+//            buffer.flip();
             return buffer;
         }
     }

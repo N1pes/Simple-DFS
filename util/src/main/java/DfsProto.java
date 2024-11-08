@@ -159,6 +159,8 @@ public class DfsProto {
             args.get(argsBuffer.array());
 
             if (data != null && header.fileSize != 0) {
+                Logger.log(data.toString());
+                Logger.log(dataBuffer.toString());
                 data.get(dataBuffer.array());
             }
 
@@ -212,6 +214,8 @@ public class DfsProto {
         return new DfsProto("Invalid", "", (short)0);
 
     }
+
+    public void setData(ByteBuffer data) { this.data = data; }
 
     public String args() {
         return byteBufferToString(this.args);
